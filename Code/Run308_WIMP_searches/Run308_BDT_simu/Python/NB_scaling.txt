@@ -1,0 +1,10 @@
+For scaling, the current procedure is:
+
+First do the usual get_scaling.py
+Simulate a first pass of build_true_events with lax cuts on veto (sigma_vet=50)
+And minus 2 on ionisation.
+
+Only cut =  1.5<EC<15 and Efid<15
+
+=> Then count the number of events in each population with the correct_scaling() function
+=> Adapt the scaling by playing on the bounds inf/sup which are used to compute it in the get_scaling() function

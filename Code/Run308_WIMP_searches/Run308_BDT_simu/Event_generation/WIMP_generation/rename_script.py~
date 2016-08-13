@@ -1,0 +1,60 @@
+#This script renames all files in the directory by replacing a pattern by a new specified one
+#It uses a bottom up approach to do that.
+
+
+import os
+
+
+def rename_files_dir(target_dir,old_pattern,new_pattern):
+#Rename all files and dir in the target dir by changing old_pattern to new_pattern
+#Every time old_pattern is present (for instance, x 3 in a dir: it is replaced)
+
+    #First rename subFolders. Key point is to use a bottom up approach: use topdown=False
+    for root, subFolders, files in os.walk(target_dir,topdown=False):
+         for direc in  subFolders: 
+            if old_pattern in direc:
+                  #print direc
+                  new_dir= direc.replace(old_pattern,new_pattern)
+                  old_filepath = os.path.join(root, direc)
+                  new_filepath = os.path.join(root, new_dir)
+                  os.rename(old_filepath, new_filepath)
+
+    #Then rename files
+    for root, subFolders, files in os.walk(target_dir):
+         for filou in  files: 
+             if old_pattern in filou:
+                  #print direc
+                  new_file= filou.replace(old_pattern,new_pattern)
+                  old_filepath = os.path.join(root, filou)
+                  new_filepath = os.path.join(root, new_file)
+                  os.rename(old_filepath, new_filepath)
+
+
+
+
+
+def rename_pattern_in_files(target_dir,old_pattern,new_pattern):
+#Rewrite all files in target_dir by changin old_pattern to new_pattern
+#Everytime it is encountered
+    for root, subFolders, files in os.walk(target_dir):
+         for filou in  files: 
+             if (filou.endswith(".C") or filou.endswith(".txt") or filou.endswith(".py")):
+                 fin=open(os.path.join(root, filou), "r")
+                 stuff=list(fin.readlines())
+                 fin.close()
+                 fout=open(os.path.join(root, filou), "w")                
+                 for line in stuff:
+                     fout.write(line.replace(old_pattern,new_pattern))
+                 fout.close()
+
+def rename_all(direc, old, new):
+
+    rename_files_dir(direc, old,new)
+    rename_pattern_in_files(direc,old,new)
+
+
+direc='/home/irfulx204/mnt/tmain/Desktop/General_BDT_ana/WIMP_generation/Events_validation/'
+old='hist__mass'
+new='hist_mass'
+rename_all(direc,old,new)
+

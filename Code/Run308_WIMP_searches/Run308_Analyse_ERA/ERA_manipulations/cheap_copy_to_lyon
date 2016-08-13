@@ -1,0 +1,8 @@
+scp *.py* tmain@ccage.in2p3.fr:/sps/edelweis/tmain/ERA_computations/.
+scp *.zip* tmain@ccage.in2p3.fr:/sps/edelweis/tmain/ERA_computations/.
+
+rsync -avz ERA tmain@ccage.in2p3.fr:/sps/edelweis/tmain/ERA_computations
+rsync -avz tmain@ccage.in2p3.fr:/sps/edelweis/tmain/ERA_computations/FID837/*trace_tree.root* ../Trace_files/FID837/
+rsync -avz tmain@ccage.in2p3.fr:/sps/edelweis/tmain/ERA_computations/FID837/*event_tree.root* ../Event_files/FID837/
+
+scp tmain@ccage.in2p3.fr:/sps/edelweis/EdwRootAna/Run308/FID837/*.txt* ./Text_files/FID837

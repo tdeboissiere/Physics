@@ -1,0 +1,5 @@
+eradir = /sps/edelweis/armengau/ERA
+anadir = /sps/edelweis/armengau/era_run300
+bolo = FID825
+sambadir = /sps/edelweis/RawData/Run300/FET_Chaud
+#runselection = /afs/in2p3.fr/home/a/armengau/SPSEdw/armengau/ERA/exemple_runselection.txt

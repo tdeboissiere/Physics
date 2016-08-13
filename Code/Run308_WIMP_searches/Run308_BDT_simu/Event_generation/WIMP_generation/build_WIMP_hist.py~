@@ -1,0 +1,51 @@
+from ROOT import *
+
+import glob
+
+
+########################################################################
+#
+# Build a 2D WIMP histogram in the Er(NR) Ei plane with the data from the trees in Events_validation/
+#
+########################################################################
+
+
+def main(Vfid=8.):
+    #############################
+    # HIST CREATION SCRIPT
+    #
+    # Vfid 		(float) 	fiducial bias
+    ##############################
+
+    listf=glob.glob("./Events_validation/*.root")
+    lf=[]
+    for elem in listf:
+        if 'hist' not in elem:
+            lf.append(elem)
+    
+    listf=lf
+    
+    for elem in listf:
+        print 'Now creating hist from:', elem
+        froot=TFile(elem,"read")
+        t=froot.Get("t1")
+        h=TH2F("h","h",200,0,20,200,0,10)
+        print '# of entries', t.GetEntries()
+        for index, item in enumerate(t):
+            heat=0.5*(item.EC1+item.EC2)
+            heatNR=heat*(1+Vfid/3.)/(1+0.24*Vfid/3)
+            ion=0.5*(item.EIB+item.EID)
+         
+            h.Fill(heatNR,ion)
+        fhist=TFile('./Events_validation/hist_' +elem[22:] , 'recreate')
+        h.Write()
+        fhist.Close()
+        del h
+        del fhist
+
+
+main()
+
+
+
+

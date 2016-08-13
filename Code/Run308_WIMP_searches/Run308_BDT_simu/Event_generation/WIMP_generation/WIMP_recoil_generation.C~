@@ -1,0 +1,180 @@
+
+
+#ifndef __CINT__
+#include "RooGlobalFunc.h"
+#endif
+#include <iostream>
+#include <fstream>
+#include "RooAbsReal.h"
+#include "RooRealVar.h"
+#include "RooDataSet.h"
+#include "RooGaussian.h"
+#include "RooChebychev.h"
+#include "RooAddPdf.h"
+#include "RooExtendPdf.h"
+#include "RooMCStudy.h"
+#include "RooProdPdf.h"
+#include "RooNLLVar.h"
+#include "RooProfileLL.h"
+#include "RooPlot.h"
+#include "TCanvas.h"
+#include "TAxis.h"
+#include "RooPlot.h"
+#include <vector>
+#include "TF1.h"
+#include "TH1.h"
+#include "TGraph.h"
+#include "TMath.h"
+#include "TFile.h"
+
+
+
+using namespace RooFit ;
+using namespace std;
+
+
+int get_WIMP_events(float A_target, int Wmass, float vel_0, float vel_esc, float sigma_cross, int num_events, TString flag)
+{
+
+///-----------------------------------///
+///
+/// Build a list of events 
+/// Arguments:
+///	A_target 	=> float 	=> target nucleus 
+///	Mchi		=> int 		=> Wimp mass
+///	v0 		=> float 	=> earth speed
+///	vesc		=> float	=> escape velocity
+///	sigma_cross	=> float	=> cross section
+///
+/// Ouput:
+///     a .txt file corresponding to the Wmass which contains the events
+///-----------------------------------///
+
+
+// S e t u p      p d f 
+// ---------------------------------------
+ 
+  
+// Declare variables for the Wimp rate 
+RooRealVar A("A","A",A_target) ;				//Germanium
+RooRealVar E("E","E",0,20);  					//in keV
+RooRealVar Mchi("Mchi","Mchi",Wmass) ;				//in GeV
+RooRealVar v0("v0","v0",vel_0) ;					//in km.s⁻¹
+RooRealVar vesc("vesc","vesc",vel_esc) ;			//in km.s⁻¹
+RooRealVar sigma_nuc("sigma_nuc","sigma_nuc",sigma_cross) ;	//in pb	  (keep it even though it disappears with normalisation)
+								//	  (it is not even used in the rate from RooWimp.cxx)
+								//        (however it could be useful later)
+
+const char * name_eff = "/home/irfulx204/mnt/tmain/Desktop/Test_BDT_ana/WIMP_generation/effNR.root";
+TFile * file_eff= new TFile(name_eff,"read"); 
+TF1* func_eff = (TF1*)file_eff->Get("r");
+
+  
+// Build WimpRate p.d.f 
+RooWimp WRate("WimpRate","WimpRate",E,Mchi,sigma_nuc,A,v0,vesc, func_eff) ;
+  
+
+// Generate recoil events 
+// --------------------------------------
+
+TString  s_Wmass= Form("%d", Wmass); 
+TString filename;
+
+if (flag ==TString("Std")) {filename=TString("./Events/recoils_mass_")+s_Wmass+TString("_GeV.txt");}
+if (flag ==TString("S1")) {filename=TString("./Events_S1/recoils_mass_")+s_Wmass+TString("_GeV.txt");}
+if (flag ==TString("S2")) {filename=TString("./Events_S2/recoils_mass_")+s_Wmass+TString("_GeV.txt");}
+
+if (flag ==TString("Val")) {filename=TString("./Events_validation/recoils_mass_")+s_Wmass+TString("_GeV.txt");}
+if (flag ==TString("ValS1")) {filename=TString("./Events_validation_S1/recoils_mass_")+s_Wmass+TString("_GeV.txt");}
+if (flag ==TString("ValS2")) {filename=TString("./Events_validation_S2/recoils_mass_")+s_Wmass+TString("_GeV.txt");}
+
+
+
+RooRandom::randomGenerator()->SetSeed(0);
+RooMCStudy mgr(WRate,RooArgSet(E));
+mgr.generate(1,num_events,kFALSE,filename);
+
+return 0;
+ 
+ }
+
+
+int intermediate(float A_target, vector<int>& Wmass_vec, float vel_0, float vel_esc, float sigma_cross, int num_events, TString flag) {
+///-----------------------------------///
+///
+/// Intermediate function which will generate events for the specified flag (Std, Val, S1 , S2 etc..) 
+/// Arguments:
+///	A_target 	=> float 	=> target nucleus 
+///	Mchi		=> int 		=> Wimp mass
+///	v0 		=> float 	=> earth speed
+///	vesc		=> float	=> escape velocity
+///	sigma_cross	=> float	=> cross section
+///     flag		=> TString	=> the ID of the population to be simulated
+///
+/// Ouput:
+///     a .txt file corresponding to the Wmass which contains the events
+///-----------------------------------///
+    for(std::vector<int>::iterator it = Wmass_vec.begin(); it != Wmass_vec.end(); it++) {
+        cout << "**********************************************************************" << endl;
+        cout << "Now generating events for WIMPS with " << *it << " GeV mass" << endl;
+        cout << "**********************************************************************" << endl;
+        get_WIMP_events(A_target, *it, vel_0, vel_esc, sigma_cross, num_events, flag);
+    }
+
+}
+
+int main(int num_events) {
+
+///-----------------------------------///
+///
+/// Build a list of events 
+/// Arguments:
+///     a flag which indicates the type of events to be simulated
+/// Ouputs:
+///     .txt files corresponding to given Wmass 
+///-----------------------------------///
+
+
+#ifdef __CINT__
+ gROOT->ProcessLineSync(".x RooWimp.cxx+") ;
+#endif
+
+
+//------------------------------///
+// Other parameters
+//------------------------------///
+float A_target=72.;
+float vel_0=220.;
+float vel_esc=544.;
+float sigma_cross=1E-6;
+
+vector<TString> flag_vec;
+flag_vec.push_back(TString("Std"));	flag_vec.push_back(TString("S1"));	flag_vec.push_back(TString("S2"));
+flag_vec.push_back(TString("Val"));	flag_vec.push_back(TString("ValS1"));	flag_vec.push_back(TString("ValS2"));
+
+vector<int> Wmass_vec;
+//Wmass_vec.push_back(5);	Wmass_vec.push_back(7);	Wmass_vec.push_back(10);	Wmass_vec.push_back(15);
+//Wmass_vec.push_back(30);	Wmass_vec.push_back(50);	Wmass_vec.push_back(70);	Wmass_vec.push_back(100);
+//Wmass_vec.push_back(200);	Wmass_vec.push_back(300);	Wmass_vec.push_back(400);	Wmass_vec.push_back(500);
+
+//for (int k=3; k<10; k++) Wmass_vec.push_back(10*k);
+//for (int k=1; k<9; k++) Wmass_vec.push_back(100*k);
+
+for (int k=6; k<=15; k++) Wmass_vec.push_back(k);
+Wmass_vec.push_back(20); Wmass_vec.push_back(25); Wmass_vec.push_back(30);
+
+
+for(std::vector<TString>::iterator it = flag_vec.begin(); it != flag_vec.end(); it++) {
+
+    intermediate(A_target, Wmass_vec, vel_0, vel_esc, sigma_cross, num_events, *it);
+    cout << "***********************************" << endl;
+    cout << TString("Generating events for  ") + *it + TString("  as the event type") << endl;
+    cout << "***********************************" << endl;
+}
+
+
+
+return 0;
+
+}
+

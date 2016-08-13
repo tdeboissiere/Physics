@@ -1,0 +1,9 @@
+AnaDir = /sps/edelweis/EdwRootAna/Run308
+SambaDir = /sps/edelweis/RawData/Run308
+BoloName = FID837
+
+
+OverWrite = 1
+#RunName = mk08f003
+#ChannelSelection = Ionisation
+#SynchroMode = FromIonFid

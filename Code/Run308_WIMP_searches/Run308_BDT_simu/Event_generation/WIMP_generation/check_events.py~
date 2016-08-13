@@ -1,0 +1,27 @@
+#!/usr/bin/env python
+import numpy as np
+import matplotlib.pylab as plt
+
+################################################################################
+#
+#  Quick and dirty code to have a look at the simulated distributions
+#
+###################################################################################
+
+
+f=open('./Events/recoils_mass_5_GeV.txt', 'read')
+stuff=f.readlines()
+x1=[float(elem.rstrip()) for elem in stuff]
+
+n1, bins1, patches1 = plt.hist(x1, 100, normed=1, histtype='stepfilled')
+plt.setp(patches1, 'facecolor', 'g', 'alpha', 0.75) 
+
+g=open('./Events/recoils_mass_400_GeV.txt', 'read')
+stuff2=g.readlines()
+x2=[float(elem.rstrip()) for elem in stuff2]
+
+n2, bins2, patches2 = plt.hist(x2, 100, normed=1, histtype='stepfilled')
+plt.setp(patches2, 'facecolor', 'b', 'alpha', 0.75) 
+
+plt.gca().set_yscale('log')
+plt.show()

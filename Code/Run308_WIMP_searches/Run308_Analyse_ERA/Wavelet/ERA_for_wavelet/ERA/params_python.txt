@@ -1,0 +1,11 @@
+eradir = /sps/edelweis/fvazquez/ERA
+anadir = /sps/edelweis/EdwRootAna/Run308
+sambadir = /sps/edelweis/RawData/Run308
+bolo = FID820
+#saveplots = 1
+#voie = Chal1
+#overwrite = 1
+#interactif = 1
+#run = mk08f003
+ 
+

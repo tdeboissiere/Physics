@@ -1,0 +1,80 @@
+#! /usr/bin/env python
+
+import global_dir
+import os
+
+#######################################################
+#This script automatically does all the steps described in the utilisation_era.pdf, starting with the creation of the target folder structure.
+#Must be run from the folder containing it...
+
+#To-Do: make this cross-platform. And avoid calling os.system?
+#######################################################
+
+
+#Change here the parameters of the script
+
+bolo_name = 'FID821'	#Bolometer of which we want the traces
+update_dirs = False	#Changes the directories in this script to match those in global_dir, if set to True
+steps = range(3)	#List of the steps we want to do. Put steps = range(3) if you want to do them all
+
+print "Processing "+bolo_name+", steps "+str(steps)
+
+#######################################################	
+#Step 0 = Initialisation
+#######################################################
+
+if 0 in steps:
+
+	#Create folder structure in era_processed
+	for subdir in ['/Amplitudes','/Spectra','/Traces','/Figures']:	
+		if not os.path.isdir(global_dir.era_processed + bolo_name + subdir):
+			os.makedirs(global_dir.era_processed + bolo_name + subdir)
+
+	#Modify params_python.txt
+
+	with open(global_dir.era + 'params_python.txt', 'r') as par_file:
+		par_python = par_file.readlines()
+
+	par_python[3] = 'bolo = '+ bolo_name +'\n'
+	if update_dirs:
+		#[:-1] eliminates the slash at the end of the paths, as specified 
+		par_python[0] = 'eradir = ' + global_dir.era[:-1] + '\n'
+		par_python[1] = 'anadir = ' + global_dir.era_processed[:-1] + '\n'
+		par_python[2] = 'sambadir = ' + global_dir.raw_data[:-1] + '\n'
+
+	with open(global_dir.era + 'params_python.txt', 'w') as par_file:
+		par_file.writelines(par_python)
+	
+
+	#Modify params_era.txt
+
+	with open(global_dir.era + 'params_era.txt', 'r') as par_file:
+		par_era = par_file.readlines()
+
+	par_era[2] = 'BoloName = '+ bolo_name +'\n'
+	if update_dirs:
+		par_era[0] = 'AnaDir = ' + global_dir.era_processed[:-1] + '\n'
+		par_era[1] = 'SambaDir = ' + global_dir.raw_data[:-1] + '\n'
+
+	with open(global_dir.era + 'params_era.txt', 'w') as par_file:
+		par_file.writelines(par_era)
+	
+	
+	
+#######################################################	
+#Step 1 = BuildRunList and BuilPolarList
+#######################################################
+
+if 1 in steps:
+	os.system(global_dir.era + 'python/BuildRunList.py')
+	os.system(global_dir.era + 'python/BuildPolarList.py')
+
+
+#######################################################
+#Step 2 = SambaToRoot
+#######################################################
+
+if 2 in steps:
+	os.system(global_dir.era + 'bin/SambaToRoot.exe ' + global_dir.era + 'params_era.txt')
+	
+

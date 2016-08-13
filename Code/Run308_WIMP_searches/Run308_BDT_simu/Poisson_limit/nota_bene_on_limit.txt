@@ -1,0 +1,7 @@
+2 .C scripts:
+2D and not 2D
+
+not 2D is used when normalising the limit with generated samples (and integrating the 1D spectrum)
+2D is used when normalising with the 2D PDF
+
+so beware in plot_limit_clean, need to change the file WIMP_counts_for_1kgday_ .....

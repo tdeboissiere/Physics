@@ -1,0 +1,564 @@
+#! /usr/bin/env python
+
+# TODOs...
+# - debug "find template" (offset en temps sur l'ion? SURTOUT fit pulse chaleur..)
+# .. et pour wiener fit, faire plot A/chi2(offset)
+
+from GlobalParams import ReadGlobalParams
+import os, sys
+
+################################
+# LECTURE DES PARAMETRES
+paramfile="params_python.txt"
+if len(sys.argv) == 2 : paramfile=sys.argv[1]
+gParams=ReadGlobalParams(paramfile)
+anadir=gParams['anadir']+"/"
+eradir=gParams['eradir']+"/"
+bolo=gParams["bolo"]
+userootfit=gParams["userootfit"] if "userootfit" in gParams else 0
+################################
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
+from matplotlib.figure import Figure
+import RunParams
+from ROOT import *
+ROOT.gSystem.Load(eradir+'lib/EraLib.so')
+from ROOT import EdwPulse,EdwEvent,FitPulse,EdwTemplate,NoiseSpectrum
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2TkAgg
+import Tkinter as Tk
+from TemplateFct import *
+
+class EventDisplay:
+    def __init__(self,tkroot,anadir,bolo):
+        self.anadir=anadir
+        self.bolo=bolo
+        self.BoloDir=anadir+"/"+bolo+"/"
+        self.tracedir=self.BoloDir+"Traces/"
+        self.ampldir=self.BoloDir+"Amplitudes/"
+        self.spectradir=self.BoloDir+"Spectra/"
+        # Liste runs
+        self.runlist=[run.Name for run in RunParams.ReadListeRuns(self.BoloDir)]
+        self.Run=(self.runlist)[0]
+        self.TkVarRun=Tk.StringVar()
+        self.TkVarRun.set(self.Run)
+        # Liste voies
+        self.channel_list=RunParams.ReadBoloChannels(self.bolo,self.anadir,remove_none=1)
+        self.channel_dict=RunParams.ReadBoloChannels(self.bolo,self.anadir,remove_none=1,dico=1)
+        self.Channel=self.channel_list[0]
+        self.TkVarVoie=Tk.StringVar()
+        self.TkVarVoie.set(self.Channel)
+        # Prepare le tree et l'evt
+        self.TkVarEvtNum=Tk.StringVar()
+        self.TkVarNbEvts=Tk.StringVar()
+        self.updatetree()
+        self.AmplSeuil=0
+        self.TkVarAmplSeuil=Tk.StringVar()
+        self.TkVarAmplSeuil.set(str(self.AmplSeuil))
+        self.EvtListNumber=-1
+
+        self.TkVarStackTmplt=Tk.IntVar()
+        self.TkVarStackTmplt.set(0)
+        self.TkVarNtdTmplt=Tk.IntVar()
+        self.TkVarNtdTmplt.set(0)
+        self.ListCoefTmplt=[]
+        self.VoieListCoefTmplt=""
+
+        # (un frame haut contient le frame gauche + le frame plot)
+        # Frame gauche : le choix des voies et les operations sur le pulse
+        ################################
+        self.framehaut=Tk.Frame(tkroot)
+        self.framehaut.pack(side=Tk.TOP,expand=Tk.YES,fill=Tk.BOTH)
+        self.framegauche=Tk.Frame(self.framehaut)
+        self.framegauche.pack(side=Tk.LEFT,padx=10)
+        for voie in self.channel_list:
+            radio_voie=Tk.Radiobutton(self.framegauche,text=voie.ljust(20),variable=self.TkVarVoie,value=voie,command=self.updatevoie)
+            radio_voie.pack(side=Tk.TOP,anchor=Tk.W)
+        self.button_preproc=Tk.Button(master=self.framegauche,text="Preprocess",command=self.preprocess,width=14)
+        self.button_preproc.pack(side=Tk.TOP)
+        self.button_wiener=Tk.Button(master=self.framegauche,text="Wiener fit",command=self.wienerfit,width=14)
+        self.button_wiener.pack(side=Tk.TOP)
+        self.button_fourier=Tk.Button(master=self.framegauche,text="Frequency view",command=self.plotnoise,width=14)
+        self.button_fourier.pack(side=Tk.TOP)
+        self.button_psa=Tk.Button(master=self.framegauche,text="PSA",command=self.psa,width=14)
+        self.button_psa.pack(side=Tk.TOP)
+        self.button_getntpvars=Tk.Button(master=self.framegauche,text="Get ntp variables",command=self.get_ntpvars,width=14)
+        self.button_getntpvars.pack(side=Tk.TOP)
+        self.dumlabel=Tk.Label(self.framegauche,text="   ")
+        self.dumlabel.pack(side=Tk.TOP)
+        self.button_fittmplt=Tk.Button(master=self.framegauche,text="Find Template",command=self.fit_template,width=14)
+        self.button_fittmplt.pack(side=Tk.TOP)
+        self.button_plotcoefs=Tk.Button(master=self.framegauche,text="Plot Tmplt Coefs",command=self.plot_template_coefs,width=14)
+        self.button_plotcoefs.pack(side=Tk.TOP)
+        self.checkbutton_stacktmplt=Tk.Checkbutton(master=self.framegauche,text="Stack templates",variable=self.TkVarStackTmplt)
+        self.checkbutton_stacktmplt.pack(side=Tk.TOP,anchor=Tk.W)
+        self.checkbutton_ntdtmplt=Tk.Checkbutton(master=self.framegauche,text="NTD heat template",variable=self.TkVarNtdTmplt)
+        self.checkbutton_ntdtmplt.pack(side=Tk.TOP,anchor=Tk.W)
+
+        # A droite de ce frame : Le plot
+        ################################
+        self.frameplot=Tk.Frame(self.framehaut)
+        self.frameplot.pack(side=Tk.RIGHT,expand=Tk.YES,fill=Tk.BOTH)
+        fig = Figure(figsize=(6,4), dpi=100)
+        self.SubPlot=fig.add_subplot(111)
+        self.Canvas=FigureCanvasTkAgg(fig, master=self.frameplot)
+        self.Canvas.get_tk_widget().pack(side=Tk.TOP, fill=Tk.BOTH, expand=1)
+        #self.Canvas._tkcanvas.pack(side=Tk.TOP, fill=Tk.BOTH, expand=1)
+        self.update_trace()
+        toolbar=NavigationToolbar2TkAgg(self.Canvas,self.frameplot)
+        toolbar.pack(side=Tk.TOP)
+        #toolbar.configure(background="grey")
+        toolbar.update()
+
+        # Un frame en dessous
+        ################################
+        self.frameinferieur=Tk.Frame(tkroot)
+        self.frameinferieur.pack(side=Tk.TOP)
+        self.label_evtnum=Tk.Label(self.frameinferieur,text="    Event num:")
+        self.label_evtnum.pack(side=Tk.LEFT)
+        self.Entry_evtnum=Tk.Entry(self.frameinferieur,width=5,textvariable=self.TkVarEvtNum)
+        self.Entry_evtnum.pack(side=Tk.LEFT)
+        self.button_evtnum=Tk.Button(master=self.frameinferieur,text="Go",command=self.choix_numevt)
+        self.button_evtnum.pack(side=Tk.LEFT)
+        self.button_prevevt=Tk.Button(master=self.frameinferieur, text='Prev', command=self.prev_evt)
+        self.button_prevevt.pack(side=Tk.LEFT)
+        self.button_nextevt=Tk.Button(master=self.frameinferieur, text='Next', command=self.next_evt)
+        self.button_nextevt.pack(side=Tk.LEFT)
+        self.label_amplseuil=Tk.Label(self.frameinferieur,text="   Amplitude threshold:")
+        self.label_amplseuil.pack(side=Tk.LEFT)
+        self.Entry_amplseuil=Tk.Entry(self.frameinferieur,width=7,textvariable=self.TkVarAmplSeuil)
+        self.Entry_amplseuil.pack(side=Tk.LEFT)
+        self.button_evtlist=Tk.Button(master=self.frameinferieur,text="Scan evt list",command=self.scanevtlist)
+        self.button_evtlist.pack(side=Tk.TOP)
+
+        # Un 2e frame en dessous
+        ################################
+        self.frameinferieur2=Tk.Frame(tkroot)
+        self.frameinferieur2.pack(side=Tk.BOTTOM,pady=10)
+        self.label_run=Tk.Label(self.frameinferieur2,text="Select run:")
+        self.label_run.pack(side=Tk.LEFT)
+        self.menu_run=Tk.OptionMenu(self.frameinferieur2,self.TkVarRun,*self.runlist)
+        self.menu_run.pack(side=Tk.LEFT)
+        self.button_run=Tk.Button(master=self.frameinferieur2,text="Go",command=self.choixrun)
+        self.button_run.pack(side=Tk.LEFT)
+        self.label_nbevts=Tk.Label(self.frameinferieur2,textvariable=self.TkVarNbEvts)
+        self.label_nbevts.pack(side=Tk.LEFT)
+        self.label_nbevts2=Tk.Label(self.frameinferieur2,text="events")
+        self.label_nbevts2.pack(side=Tk.LEFT)
+        self.button_quit = Tk.Button(master=self.frameinferieur2, text='Quit', command=sys.exit)
+        self.button_quit.pack(side=Tk.RIGHT)
+
+    #######################################  
+    # Fonctions utilitaires du clickodrome
+    #######################################
+        
+    def next_evt(self):
+        if self.EvtNum==self.NbEvts-1 : return
+        self.AmplSeuil=int(self.TkVarAmplSeuil.get())
+        ntpfile=self.ampldir+"basicntp_"+self.Run+"_"+self.bolo+".root"
+        if self.AmplSeuil==0 or not os.path.exists(ntpfile):
+            self.EvtNum+=1
+        else :
+            f=TFile(self.ampldir+"basicntp_"+self.Run+"_"+self.bolo+".root")
+            t=f.Get("basicntp_"+self.bolo)
+            chtype=([type for type,name in self.channel_dict.items() if name==self.Channel])[0]
+            while (self.EvtNum<self.NbEvts) :
+               self.EvtNum+=1
+               t.GetEntry(self.EvtNum)
+               amplitude=eval("t.SimpleAmpl"+chtype)
+               if self.AmplSeuil>0 and amplitude>self.AmplSeuil : break
+               if self.AmplSeuil<0 and amplitude<self.AmplSeuil : break
+            f.Close()
+            if self.EvtNum==self.NbEvts-1 : print "No evt found with this ampl threshold"
+        self.TkVarEvtNum.set(str(self.EvtNum))
+        self.update_trace()
+    
+    def prev_evt(self):
+        if self.EvtNum==0: return
+        self.AmplSeuil=int(self.TkVarAmplSeuil.get())
+        ntpfile=self.ampldir+"basicntp_"+self.Run+"_"+self.bolo+".root"
+        if self.AmplSeuil==0 or not os.path.exists(ntpfile):
+            self.EvtNum-=1
+        else :
+            f=TFile(self.ampldir+"basicntp_"+self.Run+"_"+self.bolo+".root")
+            t=f.Get("basicntp_"+self.bolo)
+            chtype=([type for type,name in self.channel_dict.items() if name==self.Channel])[0]
+            while (self.EvtNum>0) :
+               self.EvtNum-=1
+               t.GetEntry(self.EvtNum)
+               amplitude=eval("t.SimpleAmpl"+chtype)
+               if self.AmplSeuil>0 and amplitude>self.AmplSeuil : break
+               if self.AmplSeuil<0 and amplitude<self.AmplSeuil : break
+            f.Close()
+            if self.EvtNum==0 : print "No evt found with this ampl threshold"
+        self.TkVarEvtNum.set(str(self.EvtNum))
+        self.update_trace()
+
+    def choix_numevt(self):
+        #    toto=raw_input("Enter evt num?")
+        #    self.EvtNum=int(toto)
+        thenum=int(self.Entry_evtnum.get())
+        if thenum>=self.NbEvts or thenum<0 :
+            print "Wrong evt num!"
+        else :
+            self.EvtNum=thenum
+            self.TkVarEvtNum.set(str(self.EvtNum))
+            self.update_trace()
+
+    def scanevtlist(self):
+        evtlist=RunParams.ReadListeEvts(self.BoloDir)
+        if evtlist==None : return
+        if self.EvtListNumber+1>=len(evtlist) :
+            print "Starting back at beginning of evt list"
+            self.EvtListNumber=-1
+        self.EvtListNumber+=1 # NB variable initialisee a -1
+        therun=evtlist[self.EvtListNumber][0]
+        thenum=evtlist[self.EvtListNumber][1]
+        if therun not in self.runlist :
+            print "Wrong run in evt list!",therun
+            return
+        self.Run=therun
+        self.TkVarRun.set(self.Run)
+        self.updatetree()
+        if thenum>=self.NbEvts or thenum<0 :
+            print "Wrong evt num in evt list!",therun,thenum
+            return
+        self.EvtNum=thenum-1 # "-1" car le numero evt est en notation samba
+        self.TkVarEvtNum.set(str(self.EvtNum))
+        self.update_trace()
+
+    def updatevoie(self):
+        self.Channel=self.TkVarVoie.get()
+        self.update_trace()
+
+    def updatetree(self):
+        list_pulsefiles=[x for x in os.listdir(self.tracedir) if x.find(self.Run)!=-1]
+        list_pulsefiles.sort()
+        self.Tree=TChain("EdwTree")
+        for i in list_pulsefiles : self.Tree.AddFile(self.tracedir+"/"+i)
+        self.Evt=EdwEvent()
+        self.Tree.SetBranchAddress("Event",self.Evt)
+        self.EvtNum=0 # Quand on fait updatetree, on reset l'evt num a zero..
+        self.NbEvts=self.Tree.GetEntries()
+        self.TkVarEvtNum.set(str(self.EvtNum))
+        self.TkVarNbEvts.set(str(self.NbEvts))
+        
+    def choixrun(self):
+        self.Run=self.TkVarRun.get()
+        self.updatetree()
+        self.update_trace()
+
+    #######################################
+    # Les fonctions du clicodrome : affichage..
+    ######################################
+
+    def get_ntpvars(self):
+        print "*** Ntp variables for event ",self.EvtNum,"***"
+        if os.path.exists(self.ampldir+"basicntp_"+self.Run+"_"+self.bolo+".root") :
+            f=TFile(self.ampldir+"basicntp_"+self.Run+"_"+self.bolo+".root")
+            t=f.Get("basicntp_"+self.bolo)
+            t.Show(self.EvtNum)
+            f.Close()
+        if os.path.exists(self.ampldir+"eion_"+self.Run+"_"+self.bolo+".root") :
+            f=TFile(self.ampldir+"eion_"+self.Run+"_"+self.bolo+".root")
+            t=f.Get("eionntp_"+self.bolo)
+            t.Show(self.EvtNum)
+            f.Close()
+        if os.path.exists(self.ampldir+"eheat_"+self.Run+"_"+self.bolo+".root") :
+            f=TFile(self.ampldir+"eheat_"+self.Run+"_"+self.bolo+".root")
+            t=f.Get("eheatntp_"+self.bolo)
+            t.Show(self.EvtNum)
+            f.Close()
+
+    def display_info(self,wiener_result=None,psa_result=None):
+        self.SubPlot.text(0.97,0.1,self.Channel,fontsize=8,transform=self.SubPlot.transAxes,ha="right",va='bottom')
+        self.SubPlot.text(0.97,0.05,"Run "+self.Run+", Samba event "+str(self.Evt.SambaNum()),fontsize=8,transform=self.SubPlot.transAxes,ha='right',va='bottom')
+        if wiener_result!=None:
+            self.SubPlot.text(0.97,0.95,("Afit={0:.2f} ADUs\nToffset={1:.2f} bins\nChi2={2:.2f}").format(wiener_result[0],wiener_result[1],wiener_result[2]),fontsize=8,transform=self.SubPlot.transAxes,bbox=dict(facecolor='red', alpha=0.3),ha='right',va='top')
+        if psa_result!=None:
+            self.SubPlot.text(0.97,0.95,("Width={0:.2f} bins\nRisetime={1:.2f} bins\nFalltime={2:.2f} bins").format(psa_result[0],psa_result[1],psa_result[2]),fontsize=8,transform=self.SubPlot.transAxes,bbox=dict(facecolor='red', alpha=0.3),ha='right',va='top')
+
+    def update_trace(self):
+        self.Tree.GetEntry(self.EvtNum)
+        self.Pulse=self.Evt.Pulse(self.Channel)
+        self.SubPlot.clear()
+        if self.Pulse != None :
+            self.xmin=0
+            self.xmax=self.Pulse.TraceLength()
+            self.ymin=min(self.Pulse.Trace())-10
+            self.ymax=max(self.Pulse.Trace())+10
+            self.SubPlot.plot(np.arange(self.xmax),self.Pulse.Trace(),color="black")
+            self.SubPlot.axis([self.xmin,self.xmax,self.ymin,self.ymax])
+            self.display_info()
+        else :
+            self.SubPlot.axis([0,1,0,1])
+            self.SubPlot.text(0.4,0.4,"No pulse",color="red",fontsize=20)
+        self.Canvas.show()
+
+    #######################################
+    # Les fonctions du clicodrome : analyse..
+    ######################################
+
+    def preprocess(self):
+        if self.Pulse != None :
+            self.PPulse=FitPulse(self.Pulse)
+            self.PPulse.BasicPreprocess(1)
+            self.PPulse.FindPeaks(1,1) # meme critere que calcul spectres bruit.
+            self.xmin=0
+            self.xmax=self.Pulse.TraceLength()
+            self.ymin=min(self.PPulse.ProcessedTrace())-10
+            self.ymax=max(self.PPulse.ProcessedTrace())+10
+            self.SubPlot.clear()
+            self.SubPlot.plot(np.arange(self.xmax),self.PPulse.ProcessedTrace(),color="blue")
+            self.SubPlot.axis([self.xmin,self.xmax,self.ymin,self.ymax])
+            #        gSubPlot.autoscale(tight=True)
+            bins=self.PPulse.PeakBins()
+            for i in bins[:]:
+                self.SubPlot.axvline(x=i,linestyle='--',color='g')
+            if self.PPulse.PeakOutsideWindow()==1 :
+                self.SubPlot.text(0.1*self.xmax,self.ymin+0.2*(self.ymax-self.ymin),"Pileup in the trace",color="green",fontsize=10)
+            if len(bins)==0 :
+                self.SubPlot.text(0.1*self.xmax,self.ymin+0.1*(self.ymax-self.ymin),"Trace used in noise calculation",color="green",fontsize=10)
+            self.display_info()
+            self.Canvas.show()
+
+    def psa(self):
+        if self.Pulse!=None :
+            self.PPulse=FitPulse(self.Pulse)
+            pw=self.PPulse.GetFWHMParams()
+            pr=self.PPulse.GetRiseTimeParams()
+            pf=self.PPulse.GetFallTimeParams()
+            smooth=self.PPulse.SmoothedTrace()
+            self.xmin=0
+            self.xmax=self.Pulse.TraceLength()
+            self.ymin=min(self.PPulse.ProcessedTrace())-10
+            self.ymax=max(self.PPulse.ProcessedTrace())+10
+            self.SubPlot.clear()
+            self.SubPlot.plot(np.arange(self.xmax),self.PPulse.ProcessedTrace(),color="blue")
+            self.SubPlot.plot(np.arange(self.xmax),smooth,color="green")
+            if pw!=[0,0,0] :
+                self.SubPlot.plot([pw[1],pw[0]+pw[1]],[pw[2],pw[2]],color="red")
+            self.SubPlot.plot([pr[1],pr[0]+pr[1]],[pr[2],pr[3]],color="red")
+            self.SubPlot.plot([pf[1],pf[0]+pf[1]],[pf[2],pf[3]],color="red")
+            self.SubPlot.axis([self.xmin,self.xmax,self.ymin,self.ymax])
+#    gSubPlot.autoscale(tight=True)
+            self.display_info(psa_result=[pw[0],pr[0],pf[0]])
+            self.Canvas.show()
+
+    def wienerfit(self):
+        if self.Pulse == None : return
+        self.PPulse=FitPulse(self.Pulse)
+        noisefilename=self.spectradir+"spectra_"+self.Run+"_"+self.bolo+".root"
+        noise=RunParams.GetNoiseSpectrum(noisefilename,self.Channel,self.Evt.DateSec()).Spectrum()
+        tmplt_type="Standard"
+        if self.TkVarNtdTmplt.get()==1 : tmplt_type="ChalNTD"
+        tstr=RunParams.GetTemplate(self.anadir+self.bolo,self.Channel,tmplt_type)
+        template=EdwTemplate()
+        template.Initialize(tstr[0],tstr[1],tstr[2],tstr[3],tstr[4],self.PPulse.TraceLength(),self.PPulse.Pretrigger(),self.PPulse.FitTimeMin(),self.PPulse.FitTimeMax(),noise)
+        result=self.PPulse.WienerLoop(template,noise)
+        #res[1]=offset, res[0]=ampl
+        # ! effet modulation !
+        sortie=template.ComputeTrace(result[1]/self.PPulse.ModulationLength(),1)
+        # todo = grille plus fine pour "sortie" (10 pts/bin...)
+        sortie=[ result[0]*sortie[k]*self.PPulse.Sign()*template.Sign() for k in range(self.PPulse.TraceLength())]
+        self.xmin=0
+        self.xmax=self.Pulse.TraceLength()
+        self.ymin=min(self.PPulse.ProcessedTrace())-10
+        self.ymax=max(self.PPulse.ProcessedTrace())+10
+        self.SubPlot.clear()
+        self.SubPlot.plot(np.arange(self.xmax),sortie,color="red")
+        self.SubPlot.plot(np.arange(self.xmax),self.PPulse.ProcessedTrace(),color="blue")
+        self.SubPlot.axis([self.xmin,self.xmax,self.ymin,self.ymax])
+        #  gSubPlot.autoscale(tight=True)
+        self.display_info(wiener_result=result)
+        self.Canvas.show()
+
+    def plotnoise(self):
+        if self.Pulse == None : return
+        noisefilename=self.spectradir+"spectra_"+self.Run+"_"+self.bolo+".root"
+        noise=RunParams.GetNoiseSpectrum(noisefilename,self.Channel,self.Evt.DateSec()).Spectrum()
+        self.PPulse=FitPulse(self.Pulse)
+        xmax=self.PPulse.TraceLength()
+        tstr=RunParams.GetTemplate(self.anadir+self.bolo,self.Channel)
+        template=EdwTemplate()
+        template.Initialize(tstr[0],tstr[1],tstr[2],tstr[3],tstr[4],xmax,self.PPulse.Pretrigger(),self.PPulse.FitTimeMin(),self.PPulse.FitTimeMax(),noise)
+        result=self.PPulse.WienerLoop(template,noise)
+        tmplt_spec=[self.PPulse.Sign()*result[0]*template.GetNonIntegerOffsetFFT(result[1]/self.PPulse.ModulationLength())[i] for i in range(xmax)]
+        tmplt_spec2=[d*d for d in tmplt_spec]
+        pulse_spec=[(self.PPulse.ProcessedTraceFFT())[i] for i in range(xmax)]
+        pulse_spec2=[x*x for x in pulse_spec]
+        self.SubPlot.clear()
+        p1, =self.SubPlot.plot(pulse_spec2,color="black")
+        p2, =self.SubPlot.plot(noise,color="blue")
+        p3, =self.SubPlot.plot(tmplt_spec2,color="red")
+        self.SubPlot.set_yscale('log')
+        self.SubPlot.legend([p1,p2,p3],["Data","Noise model","Pulse model"],loc=3,prop={'size':7})
+        self.SubPlot.set_xlim([0,xmax])
+        self.display_info(wiener_result=result)
+        self.Canvas.show()
+
+    def fit_template(self):
+        # 1) fait le fit (appel a fit_template_from_trace)
+        self.PPulse=FitPulse(self.Pulse)
+        self.PPulse.BasicPreprocess(0)
+        offset_est=float(self.PPulse.SimpleAmplBin())
+        ampl_est=self.PPulse.SimpleAmpl()
+        if self.PPulse.IsHeat()==1 :
+            if self.TkVarNtdTmplt.get()==1 : self.tmplt_type="ChalNTD"
+            else : self.tmplt_type="StandardChal"
+        elif self.PPulse.IsBBv2()==1 :
+            self.tmplt_type="IonBB2"
+        else :
+            self.tmplt_type="StandardIon"
+        thefit=self.fit_template_from_trace(self.PPulse.ProcessedTrace(),offset_est,ampl_est)
+        # 2) Plot du fit
+        coefs=thefit[0]
+        self.SubPlot.clear()
+        self.SubPlot.plot(thefit[1],thefit[2],color="red")
+        self.SubPlot.plot(thefit[1],self.PPulse.ProcessedTrace(),color="blue")
+        ymin=min(self.PPulse.ProcessedTrace())-5
+        ymax=max(self.PPulse.ProcessedTrace())+5
+        self.SubPlot.axis([0,len(thefit[1]),ymin,ymax])
+        #    gSubPlot.autoscale(tight=True)
+        self.Canvas.show()
+        # 3) Enregistre le fit en fct des options
+        if self.TkVarStackTmplt.get()==0 :
+            write_yes=raw_input("Write template to file? (y/n)")
+            if write_yes=="y" :
+                file=self.anadir+self.bolo+"/liste_templates.txt"
+                if (os.path.exists(file)==0) :
+                    f=open(file,"w")
+                    f.write("# Voie type tinf tsup coefficients\n")
+                    f.close()
+                f=open(file,"a")
+                f.write('"'+self.Channel+'" '+self.tmplt_type+" 0 0")
+                for c in coefs[:len(coefs)-2] : f.write(" {0:.3f}".format(c))
+                f.write("\n")
+                f.close()
+        else :
+            write_yes=raw_input("Stack template to list? (y/n)")
+            if write_yes=="y" :
+                if self.Channel!=self.VoieListCoefTmplt:
+                    print "Starting stacking template coefs for",self.Channel
+                    self.VoieListCoefTmplt=self.Channel
+                    self.ListCoefTmplt=[]
+                self.ListCoefTmplt.append(coefs[:len(coefs)-2])
+
+    def fit_template_from_trace(self,trace,offset_est,ampl_est,par0=None):
+        # Fonction de fit, avec coefs dependant du type de voie
+        nbpts=len(trace)
+        x=np.arange(nbpts)
+        y=np.asarray(trace)
+        if self.tmplt_type=="StandardChal" :
+            offset_est-=10
+            c0_est=5.
+            c1_est=10.
+            c2_est=0.2
+            c3_est=50.
+            c4_est=0.1
+            c5_est=200.
+            # print "Initial guess:",c0_est,c1_est,c2_est,c3_est,c4_est,c5_est,offset_est,ampl_est
+            if par0==None : par0=np.array([c0_est,c1_est,c2_est,c3_est,c4_est,c5_est,offset_est,ampl_est])
+            if userootfit==0 :
+                popt,pcov=curve_fit(TemplateChal,x,y,p0=np.array(par0))
+            else : # MERDIER A AMELIORER!!!!
+                fctfit=TF1('fctfit',RootTemplateChal(),0,nbpts,8)
+                fctfit.SetParameters(par0[0],par0[1],par0[2],par0[3],par0[4],par0[5],par0[6],par0[7])
+                fctfit.SetParLimits(0,0.1,50)
+                fctfit.SetParLimits(1,1,500)
+                fctfit.SetParLimits(2,0.01,5)
+                fctfit.SetParLimits(3,5,1000)
+                fctfit.SetParLimits(4,0,0.1)
+                fctfit.FixParameter(4,0)
+                fctfit.SetParLimits(5,10,5000)
+                fctfit.SetParLimits(6,0,nbpts)
+                fctfit.SetParLimits(7,-10*ampl_est,10*ampl_est)
+                datafit=TGraph(nbpts)
+                for i in x : datafit.SetPoint(int(i),i,y[i])
+                datafit.Fit(fctfit,"WM0N")
+                popt=[float(fctfit.GetParameter(i)) for i in range(8)]
+            print "Fit results: {0:.3f} {1:.3f} {2:.3f} {3:.3f} {4:.3f} {5:.3f} {6:.3f} {7:.3f}".format(popt[0],popt[1],popt[2],popt[3],popt[4],popt[5],popt[6],popt[7])
+            z=TemplateChal(x,popt[0],popt[1],popt[2],popt[3],popt[4],popt[5],popt[6],popt[7])
+        elif self.tmplt_type=="StandardIon" :
+            c0_est=1500
+            c1_est=0.15
+            c2_est=0.01
+            ampl_est/=(1-c1_est)
+            #print "Initial guess:",c0_est,c1_est,c2_est,offset_est,ampl_est
+            if par0==None : par0=np.array([c0_est,c1_est,c2_est,offset_est,ampl_est])
+            popt,pcov=curve_fit(TemplateIon,x,y,p0=np.array(par0))
+            print "Fit results: {0:.3f} {1:.3f} {2:.3f} {3:.3f} {4:.3f}".format(popt[0],popt[1],popt[2],popt[3],popt[4])
+            z=TemplateIon(x,popt[0],popt[1],popt[2],popt[3],popt[4])
+        elif self.tmplt_type=="ChalNTD" :
+            offset_est-=5
+            c0_est=0.1
+            c1_est=4.
+            if par0==None : par0=np.array([c0_est,c1_est,offset_est,ampl_est])
+            popt,pcov=curve_fit(TemplateChalNTD,x,y,p0=np.array(par0))
+            print "Fit results: {0:.3f} {1:.3f} {2:.3f} {3:.3f}".format(popt[0],popt[1],popt[2],popt[3])
+            z=TemplateChalNTD(x,popt[0],popt[1],popt[2],popt[3])
+        elif self.tmplt_type=="IonBB2" :
+            c0_est=0.01
+            # print "Initial guess:",c0_est,offset_est,ampl_est
+            if par0==None : par0=np.array([c0_est,offset_est,ampl_est])
+            popt,pcov=curve_fit(TemplateIonBB2,x,y,p0=np.array(par0))
+            print "Fit results: {0:.3f} {1:.3f} {2:.3f}".format(popt[0],popt[1],popt[2])
+            z=TemplateIonBB2(x,popt[0],popt[1],popt[2])
+        return [popt,x,z]
+            
+    def plot_template_coefs(self):
+        self.SubPlot.clear()
+        xx=np.arange(self.Pulse.TraceLength())
+        offset=self.Pulse.Pretrigger()
+        meanz=[0 for i in xx]
+        for coefs in self.ListCoefTmplt :
+            if self.tmplt_type=="StandardChal":
+                z=TemplateChal(xx,coefs[0],coefs[1],coefs[2],coefs[3],coefs[4],coefs[5],offset,1)
+            if self.tmplt_type=="StandardIon":
+                z=TemplateIon(xx,coefs[0],coefs[1],coefs[2],offset,1)
+            if self.tmplt_type=="IonBB2":
+                z=TemplateIonBB2(xx,coefs[0],offset,1)
+            norm=max(z)
+            z=[t/norm for t in z]
+            meanz=[meanz[i]+z[i] for i in xx]
+            p1, =self.SubPlot.plot(xx,z,color='blue')
+        meanz=[t/len(self.ListCoefTmplt) for t in meanz]
+        ## FIT DE MEANZ (dont la forme, avant fit, est satisfaisante)
+        # Trick : par0 obtenus par mediane des coefs...
+        nbcoefs=len(self.ListCoefTmplt[0])
+        coef_median=[0 for i in range(nbcoefs)]
+        for i in range(nbcoefs):
+            coef_median[i]=np.median([c[i] for c in self.ListCoefTmplt])
+        par0=coef_median.extend([offset+10,1])
+        result=self.fit_template_from_trace(meanz,offset+10,1,par0=coef_median)
+        coefs_fit=result[0]
+        p2,=self.SubPlot.plot(xx,meanz,color='green')
+        p3,=self.SubPlot.plot(xx,result[2],color='red')
+        self.SubPlot.legend([p1,p2,p3],["Individual templates","Mean","Fit to the mean"],loc=2,prop={'size':7})
+        self.SubPlot.axis([0,len(xx),-0.2,1.2])
+        self.Canvas.show()
+        write_yes=raw_input("Write fit to the mean to file? (y/n)")
+        if write_yes=="y" :
+            file=self.anadir+self.bolo+"/liste_templates.txt"
+            if (os.path.exists(file)==0) :
+                f=open(file,"w")
+                f.write("# Voie type tinf tsup coefficients\n")
+                f.close()
+            f=open(file,"a")
+            f.write('"'+self.Channel+'" '+self.tmplt_type+" 0 0")
+            for par in coefs_fit[:len(coefs_fit)-2] : f.write(" {0:.3f}".format(par))
+            f.write("\n")
+            f.close()
+
+################################
+# Le "main" de l'evt display 
+################################
+
+tkroot = Tk.Tk()
+tkroot.wm_title("EDELWEISS event display")
+disp=EventDisplay(tkroot,anadir,bolo)
+tkroot.mainloop() # ou Tk, semble pareil
+# If you put root.destroy() here, it will cause an error if
+# the window is closed with the window manager.
+

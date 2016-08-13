@@ -1,0 +1,6 @@
+cd /home/irfulx204/mnt/tmain/Desktop/Run308_Analyse_ERA/Wavelet
+scp *.py* tmain@ccage.in2p3.fr:/sps/edelweis/tmain/Wavelet_computations/.
+scp *.zip* tmain@ccage.in2p3.fr:/sps/edelweis/tmain/Wavelet_computations/.
+
+rsync -avz tmain@ccage.in2p3.fr:/sps/edelweis/tmain/Wavelet_computations/FID837/*.root* ./ROOT_files/FID837/
+rsync -avz ERA_for_wavelet tmain@ccage.in2p3.fr:/sps/edelweis/tmain/Wavelet_computations

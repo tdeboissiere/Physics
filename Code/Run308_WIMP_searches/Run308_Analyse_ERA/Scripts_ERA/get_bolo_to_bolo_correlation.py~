@@ -1,0 +1,75 @@
+#!/usr/bin/env python
+
+from ROOT import *
+import script_utils as script_utils
+
+def get_bolo_to_bolo(bolo_name1, bolo_name_list, data_dir, tree_name, fig_title, h_name, channel_bolo1_title, channel_bolo2_title, bin_bolo1, bin_bolo2, bin_time, min_time, max_time, list_cuts_bolo1, d_cut_list):
+    
+
+    file_tree   = TFile(data_dir+bolo_name1+"_fond.root")
+    tree        = file_tree.Get(tree_name)
+
+    cut_line_bolo1 ='&&'.join(list_cuts_bolo1)
+
+    #First  create the bolo1 hist
+    h_bolo1= TH1F("hbolo1", "hbolo1", bin_time, min_time, max_time)
+    tree.Project("hbolo1","1E6*UT1+UT2", cut_line_bolo1)
+
+    #First create the plots and save to file. Then reopen to plot. Else the hist are deleted
+    for bolo_index, bolo_name2 in  enumerate(bolo_name_list):
+
+        #Data for other bolos
+		file_tree2   = TFile(data_dir+bolo_name2+"_fond.root")
+		tree2        = file_tree2.Get(tree_name)
+		
+		cut_line_bolo2 ='&&'.join(d_cut_list[bolo_name2])
+
+		#Then  create the bolo2 hist
+		h_bolo2 = TH1F("hbolo2", "hbolo2", bin_time, min_time, max_time)
+		tree2.Project("hbolo2","1E6*UT1+UT2", cut_line_bolo2)
+		
+		#Evaluate the binning and boundaries for the correlation hist
+		min_bolo1= h_bolo1.GetBinContent(h_bolo1.GetMinimumBin())
+		max_bolo1= h_bolo1.GetBinContent(h_bolo1.GetMaximumBin())
+		
+		min_bolo2= h_bolo2.GetBinContent(h_bolo2.GetMinimumBin())
+		max_bolo2= h_bolo2.GetBinContent(h_bolo2.GetMaximumBin())
+
+		#Then create the corr hist    
+		corr_hist = TH2F("h", h_name + "_" + bolo_name1 + "_" + bolo_name2, bin_bolo1, min_bolo1, max_bolo1, bin_bolo2, min_bolo2, max_bolo2)
+		for k in range(1, bin_time +1):
+			x_entry = h_bolo1.GetBinContent(k)
+			y_entry = h_bolo2.GetBinContent(k)
+			corr_hist.Fill(x_entry,y_entry)
+		
+		fcorr = TFile("../ROOT_files/" + h_name + "_" + bolo_name1 + "_" + bolo_name2 + ".root", "recreate")
+		corr_hist.Write()
+		fcorr.Close
+		del corr_hist
+		del fcorr
+
+	list_TFile     = [TFile("../ROOT_files/" + h_name + "_" + bolo_name1 + "_" + bolo_name2 + ".root", "read") for bolo_name2 in bolo_name_list]
+	list_corr_hist = [list_TFile[i].Get("h") for i in range(len(list_TFile))]
+	
+	#Do the plots
+	cc             =TCanvas("cc","cc")
+	cc.Divide(3,4)
+	for k in range(12):
+		corr_hist.SetStats(0)
+		
+		list_corr_hist[k].GetXaxis().SetTitle(channel_bolo1_title + "_" + bolo_name1)
+		list_corr_hist[k].GetXaxis().CenterTitle(kTRUE)
+		list_corr_hist[k].GetXaxis().SetTitleSize(0.06)
+		list_corr_hist[k].GetXaxis().SetTitleOffset(0.8)
+		
+		list_corr_hist[k].GetYaxis().SetTitle(channel_bolo2_title+ "_" + bolo_name2)
+		list_corr_hist[k].GetYaxis().CenterTitle(kTRUE)
+		list_corr_hist[k].GetYaxis().SetTitleSize(0.06)
+		list_corr_hist[k].GetYaxis().SetTitleOffset(0.8)
+		cc.cd(k+1)
+		list_corr_hist[k].Draw()
+
+
+    # Define path for the .txt file. Create the directory if it does not exist, then open file
+    figure_path_name= script_utils.create_directory('../Analyse_' + bolo_name + '/Figures/')  
+    cc.Print(figure_path_name + bolo_name + "_" + fig_title + ".eps")

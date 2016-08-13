@@ -1,0 +1,2 @@
+bolo_name,calibcoeff1,calibcoeff2
+FID837,7.21188307764,9.09422757523
